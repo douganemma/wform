@@ -19,7 +19,7 @@ async function isAdmin(req,env){
   return await crypto.subtle.verify("RSASSA-PKCS1-v1_5",key,sig,new TextEncoder().encode(parts[0]+"."+parts[1]));
  }catch{return false}
 }
-const getFields=async(db,id)=>(await db.prepare("SELECT * FROM form_fields WHERE form_id=? ORDER BY position").bind(id).all()).results||[];
+const getFields=async(db,id)=>(await db.prepare("SELECT * FROM form_fields WHERE form_id=? AND field_key NOT LIKE '__archived__%' ORDER BY position").bind(id).all()).results||[];
 const send=async(env,to,payload)=>{if(!env.WA_PHONE_NUMBER_ID||!env.WA_ACCESS_TOKEN)throw Error("WhatsApp credentials not configured");const r=await fetch("https://graph.facebook.com/"+(env.WA_GRAPH_VERSION||"v27.0")+"/"+env.WA_PHONE_NUMBER_ID+"/messages",{method:"POST",headers:{authorization:"Bearer "+env.WA_ACCESS_TOKEN,"content-type":"application/json"},body:JSON.stringify({messaging_product:"whatsapp",to,...payload})});const d=await r.json();if(!r.ok)throw Error(d.error?.message||"WhatsApp API error");return d};
 async function signature(req,raw,secret){const h=req.headers.get("x-hub-signature-256")||"";if(!secret||!h.startsWith("sha256="))return false;const k=await crypto.subtle.importKey("raw",new TextEncoder().encode(secret),{name:"HMAC",hash:"SHA-256"},false,["sign"]),d=new Uint8Array(await crypto.subtle.sign("HMAC",k,new TextEncoder().encode(raw))),hex=[...d].map(x=>x.toString(16).padStart(2,"0")).join("");return hex===h.slice(7)}
 async function wa(req,env){
@@ -200,7 +200,38 @@ export default {async fetch(req,env){
  if(p==="/api/admin/forms"&&req.method==="GET")return j((await env.DB.prepare("SELECT f.*,(SELECT COUNT(*) FROM submissions s WHERE s.form_id=f.id) submissions FROM forms f ORDER BY created_at DESC").all()).results);
  if(p==="/api/admin/forms"&&req.method==="POST"){const b=await req.json(),fid=uid(),s=slug(b.slug||b.title);if(!b.title||!s)return j({error:"Title is required"},400);await env.DB.prepare("INSERT INTO forms(id,title,slug,description,status) VALUES(?,?,?,?,?)").bind(fid,b.title,s,b.description||"",b.status||"draft").run();return j({id:fid,slug:s},201)}
  let fr=p.match(/^\/api\/admin\/forms\/([^/]+)$/);if(fr&&req.method==="GET"){const f=await env.DB.prepare("SELECT * FROM forms WHERE id=?").bind(fr[1]).first();return f?j({...f,fields:await getFields(env.DB,f.id)}):j({error:"Not found"},404)}
- if(fr&&req.method==="PUT"){const b=await req.json();await env.DB.prepare("UPDATE forms SET title=?,description=?,status=?,confirmation_message=?,updated_at=datetime('now') WHERE id=?").bind(b.title,b.description||"",b.status,b.confirmation_message||"Thank you for registering.",fr[1]).run();if(Array.isArray(b.fields)){await env.DB.prepare("DELETE FROM form_fields WHERE form_id=?").bind(fr[1]).run();for(let i=0;i<b.fields.length;i++){const f=b.fields[i];await env.DB.prepare("INSERT INTO form_fields(id,form_id,label,field_key,type,required,options_json,help_text,position) VALUES(?,?,?,?,?,?,?,?,?)").bind(f.id||uid(),fr[1],f.label,slug(f.field_key||f.label).replace(/-/g,"_"),f.type,f.required?1:0,JSON.stringify(f.options||[]),f.help_text||"",i).run()}}return j({ok:true})}
+ if(fr&&req.method==="PUT"){
+  const b=await req.json();
+  const exists=await env.DB.prepare("SELECT id FROM forms WHERE id=?").bind(fr[1]).first();
+  if(!exists)return j({error:"Form not found. Please reopen the form and try again."},404);
+  await env.DB.prepare("UPDATE forms SET title=?,description=?,status=?,confirmation_message=?,updated_at=datetime('now') WHERE id=?").bind(b.title,b.description||"",b.status,b.confirmation_message||"Thank you for registering.",fr[1]).run();
+  if(Array.isArray(b.fields)){
+   const oldFields=(await env.DB.prepare("SELECT id FROM form_fields WHERE form_id=?").bind(fr[1]).all()).results||[];
+   const oldIds=new Set(oldFields.map(x=>x.id));
+   const incoming=b.fields.map((f,i)=>({...f,id:f.id||uid(),position:i}));
+   const incomingIds=new Set(incoming.map(f=>f.id));
+   const usedKeys=new Set();
+   const normalized=incoming.map(f=>{
+    let key=slug(f.field_key||f.label).replace(/-/g,"_")||"question";
+    const base=key;let n=2;while(usedKeys.has(key))key=base+"_"+n++;
+    usedKeys.add(key);return {...f,field_key:key};
+   });
+   const statements=[env.DB.prepare("UPDATE form_fields SET field_key='__tmp__'||id WHERE form_id=?").bind(fr[1])];
+   for(const old of oldFields){
+    if(!incomingIds.has(old.id)){
+     statements.push(env.DB.prepare("DELETE FROM form_fields WHERE id=? AND NOT EXISTS(SELECT 1 FROM responses WHERE field_id=?)").bind(old.id,old.id));
+     statements.push(env.DB.prepare("UPDATE form_fields SET label='[Archived] '||label,field_key='__archived__'||id WHERE id=? AND EXISTS(SELECT 1 FROM responses WHERE field_id=?)").bind(old.id,old.id));
+    }
+   }
+   for(const f of normalized){
+    const values=[f.label, f.field_key, f.type, f.required?1:0, JSON.stringify(f.options||[]), f.help_text||"", f.position];
+    if(oldIds.has(f.id))statements.push(env.DB.prepare("UPDATE form_fields SET label=?,field_key=?,type=?,required=?,options_json=?,help_text=?,position=? WHERE id=? AND form_id=?").bind(...values,f.id,fr[1]));
+    else statements.push(env.DB.prepare("INSERT INTO form_fields(id,form_id,label,field_key,type,required,options_json,help_text,position) VALUES(?,?,?,?,?,?,?,?,?)").bind(f.id,fr[1],f.label,f.field_key,f.type,f.required?1:0,JSON.stringify(f.options||[]),f.help_text||"",f.position));
+   }
+   await env.DB.batch(statements);
+  }
+  return j({ok:true});
+ }
  if(p==="/api/admin/submissions"&&req.method==="GET"){const q=u.searchParams.get("q")||"",f=u.searchParams.get("form")||"",rows=(await env.DB.prepare("SELECT s.*,f.title form_title FROM submissions s JOIN forms f ON f.id=s.form_id WHERE (?='' OR s.form_id=?) AND (?='' OR s.contact_phone LIKE ? OR s.contact_name LIKE ?) ORDER BY s.created_at DESC LIMIT 1000").bind(f,f,q,"%"+q+"%","%"+q+"%").all()).results,out=[];for(const s of rows){const r=(await env.DB.prepare("SELECT ff.label,r.value_json FROM responses r JOIN form_fields ff ON ff.id=r.field_id WHERE r.submission_id=?").bind(s.id).all()).results;s.answers=Object.fromEntries(r.map(x=>[x.label,dec(x.value_json)]));out.push(s)}return j(out)}
  let sr=p.match(/^\/api\/admin\/submissions\/([^/]+)$/);if(sr&&req.method==="DELETE"){await env.DB.prepare("DELETE FROM conversations WHERE submission_id=?").bind(sr[1]).run();await env.DB.prepare("DELETE FROM submissions WHERE id=?").bind(sr[1]).run();return j({ok:true})}
  if(p==="/api/admin/export.csv"){
