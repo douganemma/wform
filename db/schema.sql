@@ -14,3 +14,9 @@ INSERT OR IGNORE INTO form_fields(id,form_id,label,field_key,type,required,optio
 ('f-phone','starter-registration','WhatsApp / phone number','phone','phone',1,'[]',2),
 ('f-email','starter-registration','Email address','email','email',0,'[]',3),
 ('f-interests','starter-registration','Areas of interest','interests','multi_select',0,'["Training","Events","Volunteering","Partnerships"]',4);
+CREATE TABLE IF NOT EXISTS wa_delivery_events(
+ id TEXT PRIMARY KEY, message_id TEXT NOT NULL, status TEXT NOT NULL,
+ recipient_id TEXT, event_timestamp TEXT, error_json TEXT DEFAULT '{}',
+ created_at TEXT DEFAULT(datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS wa_delivery_message ON wa_delivery_events(message_id);
