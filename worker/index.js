@@ -23,20 +23,21 @@ const getFields=async(db,id)=>(await db.prepare("SELECT * FROM form_fields WHERE
 function questionPayload(field,prompt){
  const opts=dec(field.options_json)||[];
  const single=["single_select","select"].includes(field.type);
+ const canSkip=!field.required;
  if(single&&opts.length>0&&opts.length<=2){
   const buttons=opts.map((x,i)=>({type:"reply",reply:{id:"choice_"+(i+1),title:String(x).slice(0,20)}}));
-  buttons.push({type:"reply",reply:{id:"skip_question",title:"Skip"}});
+  if(canSkip)buttons.push({type:"reply",reply:{id:"skip_question",title:"Skip"}});
   return {type:"interactive",interactive:{type:"button",body:{text:prompt},action:{buttons}}};
  }
  if(single&&opts.length>0&&opts.length<=9){
   const rows=opts.map((x,i)=>({id:"choice_"+(i+1),title:String(x).slice(0,24)}));
-  rows.push({id:"skip_question",title:"Skip"});
+  if(canSkip)rows.push({id:"skip_question",title:"Skip"});
   return {type:"interactive",interactive:{type:"list",body:{text:prompt},action:{button:"Choose",sections:[{title:"Options",rows}]}}};
  }
  if(single&&opts.length>9){
   return {type:"interactive",interactive:{type:"list",body:{text:prompt},action:{button:"Choose",sections:[{title:"Options",rows:opts.slice(0,10).map((x,i)=>({id:"choice_"+(i+1),title:String(x).slice(0,24)}))}]}}};
  }
- return {type:"interactive",interactive:{type:"button",body:{text:prompt},action:{buttons:[{type:"reply",reply:{id:"skip_question",title:"Skip"}}]}}};
+ return canSkip?{type:"interactive",interactive:{type:"button",body:{text:prompt},action:{buttons:[{type:"reply",reply:{id:"skip_question",title:"Skip"}}]}}}:{type:"text",text:{body:prompt}};
 }
 const send=async(env,to,payload)=>{if(!env.WA_PHONE_NUMBER_ID||!env.WA_ACCESS_TOKEN)throw Error("WhatsApp credentials not configured");const r=await fetch("https://graph.facebook.com/"+(env.WA_GRAPH_VERSION||"v27.0")+"/"+env.WA_PHONE_NUMBER_ID+"/messages",{method:"POST",headers:{authorization:"Bearer "+env.WA_ACCESS_TOKEN,"content-type":"application/json"},body:JSON.stringify({messaging_product:"whatsapp",to,...payload})});const d=await r.json();if(!r.ok)throw Error(d.error?.message||"WhatsApp API error");return d};
 async function signature(req,raw,secret){const h=req.headers.get("x-hub-signature-256")||"";if(!secret||!h.startsWith("sha256="))return false;const k=await crypto.subtle.importKey("raw",new TextEncoder().encode(secret),{name:"HMAC",hash:"SHA-256"},false,["sign"]),d=new Uint8Array(await crypto.subtle.sign("HMAC",k,new TextEncoder().encode(raw))),hex=[...d].map(x=>x.toString(16).padStart(2,"0")).join("");return hex===h.slice(7)}
@@ -131,7 +132,7 @@ async function wa(req,env){
   if(idx<0)idx=0;
   const command=text.toLowerCase().trim();
   if(["help","menu","commands"].includes(command)){
-   await say("Here are the chat commands:\nSKIP — skip this question, even if it is marked required.\nBACK — return to the previous question.\nREPEAT — show this question again.\nCANCEL — cancel this registration.\nSTART — start a fresh registration.\nSTOP — opt out.\nYou can also reply normally or tap the choices shown.");
+   await say("Here are the chat commands:\nSKIP — skip optional questions.\nBACK — return to the previous question.\nREPEAT — show this question again.\nCANCEL — cancel this registration.\nSTART — start a fresh registration.\nSTOP — opt out.\nYou can also reply normally or tap the choices shown.");
    // Keep the current question active and repeat it below.
   }else if(["cancel","quit","exit"].includes(command)){
    await env.DB.prepare("UPDATE conversations SET state='stopped' WHERE id=?").bind(c.id).run();
@@ -159,16 +160,16 @@ async function wa(req,env){
     if(["single_select","select"].includes(f.type)){
      const n=Number(text.replace(/^choice_/,""));
      const choice=opts.find(x=>String(x).toLowerCase()===text.toLowerCase())||opts[n-1];
-     if(!choice){await say("Please choose one of the options shown, or type SKIP.\n"+opts.map((x,i)=>(i+1)+". "+x).join("\n"));continue;}
+     if(!choice){await say("Please choose one of the options shown, or type SKIP only if this question is optional.\n"+opts.map((x,i)=>(i+1)+". "+x).join("\n"));continue;}
      answer=choice;
     }
     if(f.type==="multi_select"){
      const nums=text.split(",").map(x=>Number(x.trim().replace(/^choice_/,"")));
      const selected=nums.map(n=>opts[n-1]).filter(Boolean);
-     if(!selected.length){await say("Choose option numbers separated by commas, or type SKIP:\n"+opts.map((x,i)=>(i+1)+". "+x).join("\n"));continue;}
+     if(!selected.length){await say("Choose option numbers separated by commas (type SKIP only for optional questions):\n"+opts.map((x,i)=>(i+1)+". "+x).join("\n"));continue;}
      answer=selected;
     }
-    if(answer===""&&f.required){await say("This answer is required. Please enter an answer or type SKIP.");continue;}
+    if(answer===""&&f.required){await say("This answer is required. Please enter an answer to continue.");continue;}
     await env.DB.prepare("DELETE FROM responses WHERE submission_id=? AND field_id=?").bind(c.submission_id,f.id).run();
     await env.DB.prepare("INSERT INTO responses(id,submission_id,field_id,value_json) VALUES(?,?,?,?)").bind(uid(),c.submission_id,f.id,JSON.stringify(answer)).run();
     idx++;
