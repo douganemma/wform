@@ -4,6 +4,6 @@
  "main":"worker/index.js",
  "compatibility_date":"2026-11-19",
  "assets":{"directory":"./dist","binding":"ASSETS","not_found_handling":"single-page-application"},
- "d1_databases":[{"binding":"DB","database_name":"wform-db","database_id":"REPLACE_WITH_D1_DATABASE_ID"}],
+ "d1_databases":[{"binding":"DB","database_name":"wform-db","database_id":"63f4f918-01a7-4038-8d06-6d821c4d56f3"}],
  "vars":{"APP_ENV":"production","WA_GRAPH_VERSION":"v27.0"}
 }
