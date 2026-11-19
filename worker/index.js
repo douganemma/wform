@@ -20,6 +20,24 @@ async function isAdmin(req,env){
  }catch{return false}
 }
 const getFields=async(db,id)=>(await db.prepare("SELECT * FROM form_fields WHERE form_id=? AND field_key NOT LIKE '__archived__%' ORDER BY position").bind(id).all()).results||[];
+function questionPayload(field,prompt){
+ const opts=dec(field.options_json)||[];
+ const single=["single_select","select"].includes(field.type);
+ if(single&&opts.length>0&&opts.length<=2){
+  const buttons=opts.map((x,i)=>({type:"reply",reply:{id:"choice_"+(i+1),title:String(x).slice(0,20)}}));
+  buttons.push({type:"reply",reply:{id:"skip_question",title:"Skip"}});
+  return {type:"interactive",interactive:{type:"button",body:{text:prompt},action:{buttons}}};
+ }
+ if(single&&opts.length>0&&opts.length<=9){
+  const rows=opts.map((x,i)=>({id:"choice_"+(i+1),title:String(x).slice(0,24)}));
+  rows.push({id:"skip_question",title:"Skip"});
+  return {type:"interactive",interactive:{type:"list",body:{text:prompt},action:{button:"Choose",sections:[{title:"Options",rows}]}}};
+ }
+ if(single&&opts.length>9){
+  return {type:"interactive",interactive:{type:"list",body:{text:prompt},action:{button:"Choose",sections:[{title:"Options",rows:opts.slice(0,10).map((x,i)=>({id:"choice_"+(i+1),title:String(x).slice(0,24)}))}]}}};
+ }
+ return {type:"interactive",interactive:{type:"button",body:{text:prompt},action:{buttons:[{type:"reply",reply:{id:"skip_question",title:"Skip"}}]}}};
+}
 const send=async(env,to,payload)=>{if(!env.WA_PHONE_NUMBER_ID||!env.WA_ACCESS_TOKEN)throw Error("WhatsApp credentials not configured");const r=await fetch("https://graph.facebook.com/"+(env.WA_GRAPH_VERSION||"v27.0")+"/"+env.WA_PHONE_NUMBER_ID+"/messages",{method:"POST",headers:{authorization:"Bearer "+env.WA_ACCESS_TOKEN,"content-type":"application/json"},body:JSON.stringify({messaging_product:"whatsapp",to,...payload})});const d=await r.json();if(!r.ok)throw Error(d.error?.message||"WhatsApp API error");return d};
 async function signature(req,raw,secret){const h=req.headers.get("x-hub-signature-256")||"";if(!secret||!h.startsWith("sha256="))return false;const k=await crypto.subtle.importKey("raw",new TextEncoder().encode(secret),{name:"HMAC",hash:"SHA-256"},false,["sign"]),d=new Uint8Array(await crypto.subtle.sign("HMAC",k,new TextEncoder().encode(raw))),hex=[...d].map(x=>x.toString(16).padStart(2,"0")).join("");return hex===h.slice(7)}
 async function wa(req,env){
@@ -108,9 +126,7 @@ async function wa(req,env){
    if(first.help_text)prompt+=". "+first.help_text;
    if(opts.length)prompt+=" Options: "+opts.map((x,i)=>(i+1)+". "+x).join("; ")+(first.type==="multi_select"?". For multiple answers, separate option numbers with commas.":"");
    prompt+=". Type SKIP to skip, BACK to go back, REPEAT to hear this again, or HELP for commands.";
-   let payload={type:"text",text:{body:prompt}};
-   if(["single_select","select"].includes(first.type)&&opts.length>0&&opts.length<=3)payload={type:"interactive",interactive:{type:"button",body:{text:prompt},action:{buttons:opts.map((x,i)=>({type:"reply",reply:{id:"choice_"+(i+1),title:String(x).slice(0,20)}}))}}};
-   else if(["single_select","select"].includes(first.type)&&opts.length>3&&opts.length<=10){payload={type:"interactive",interactive:{type:"list",body:{text:prompt},action:{button:"Choose",sections:[{title:"Options",rows:opts.map((x,i)=>({id:"choice_"+(i+1),title:String(x).slice(0,24)}))}]}}};}
+   const payload=questionPayload(first,prompt);
    await deliver(payload,prompt);continue;
   }
   if(!fs.length){await env.DB.prepare("UPDATE submissions SET status='complete',updated_at=datetime('now') WHERE id=?").bind(c.submission_id).run();await env.DB.prepare("UPDATE conversations SET state='complete',current_field_id=NULL WHERE id=?").bind(c.id).run();await say(form.confirmation_message||"Thank you. Your registration is complete.");continue;}
@@ -173,12 +189,7 @@ async function wa(req,env){
   if(f.help_text)prompt+="\n"+f.help_text;
   if(opts.length)prompt+="\n"+opts.map((x,i)=>(i+1)+". "+x).join("\n")+(f.type==="multi_select"?"\nFor multiple answers, separate option numbers with commas.":"");
   prompt+="\n\nType SKIP to skip, BACK to go back, REPEAT to hear this again, or HELP for commands.";
-  let payload={type:"text",text:{body:prompt}};
-  if(["single_select","select"].includes(f.type)&&opts.length>0&&opts.length<=3){
-   payload={type:"interactive",interactive:{type:"button",body:{text:prompt},action:{buttons:opts.map((x,i)=>({type:"reply",reply:{id:"choice_"+(i+1),title:String(x).slice(0,20)}}))}}};
-  }else if(["single_select","select"].includes(f.type)&&opts.length>3&&opts.length<=10){
-   payload={type:"interactive",interactive:{type:"list",body:{text:prompt},action:{button:"Choose",sections:[{title:"Options",rows:opts.map((x,i)=>({id:"choice_"+(i+1),title:String(x).slice(0,24)}))}]}}};
-  }
+   const payload=questionPayload(f,prompt);
   await deliver(payload,prompt);
  }
  return new Response("EVENT_RECEIVED");
