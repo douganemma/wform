@@ -1,20 +1,20 @@
 # W-Form
 
-W-Form is a multi-channel registration platform: build reusable forms, collect responses from the web and WhatsApp, manage submissions in an admin dashboard, and export records.
+W-Form is a multi-channel registration platform for reusable forms, web submissions and WhatsApp chatbot registrations.
 
-## Project status
+## Included foundation
+- Responsive admin dashboard and visual form builder.
+- Starter registration form and reusable form/field schema.
+- Website registration API and shared Cloudflare D1 storage.
+- Cloudflare Worker API with admin endpoints protected by Cloudflare Access JWT validation.
+- WhatsApp Cloud API webhook foundation: verification, signature validation, conversational question flow, choice and multi-choice parsing, incomplete registration resume, STOP opt-out and START restart.
+- CSV export and GitHub Actions build check.
 
-Foundation scaffold is being built. WhatsApp phone-number and business-account properties will be configured later; no phone number is assumed.
+## Stack
+React + Vite frontend, Cloudflare Workers API, Cloudflare D1 database and Meta WhatsApp Cloud API.
 
-## Planned stack
+## Getting started
+Read [docs/SETUP.md](docs/SETUP.md) for local setup, Cloudflare deployment and the WhatsApp onboarding checklist.
 
-- Cloudflare Workers API and webhook
-- Cloudflare D1 database
-- Static admin and public form application
-- Meta WhatsApp Cloud API
-
-## Security
-
-Never commit Meta access tokens, app secrets, webhook secrets, or production credentials. Configure these as encrypted Worker secrets. Admin routes must be protected before production use.
-
-See `docs/SETUP.md` for the implementation and deployment checklist.
+## WhatsApp configuration
+Phone-number properties and account identifiers are intentionally deferred until the later setup conversation. Never commit WhatsApp tokens or secrets to GitHub.
