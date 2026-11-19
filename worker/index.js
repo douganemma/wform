@@ -23,34 +23,134 @@ const getFields=async(db,id)=>(await db.prepare("SELECT * FROM form_fields WHERE
 const send=async(env,to,payload)=>{if(!env.WA_PHONE_NUMBER_ID||!env.WA_ACCESS_TOKEN)throw Error("WhatsApp credentials not configured");const r=await fetch("https://graph.facebook.com/"+(env.WA_GRAPH_VERSION||"v27.0")+"/"+env.WA_PHONE_NUMBER_ID+"/messages",{method:"POST",headers:{authorization:"Bearer "+env.WA_ACCESS_TOKEN,"content-type":"application/json"},body:JSON.stringify({messaging_product:"whatsapp",to,...payload})});const d=await r.json();if(!r.ok)throw Error(d.error?.message||"WhatsApp API error");return d};
 async function signature(req,raw,secret){const h=req.headers.get("x-hub-signature-256")||"";if(!secret||!h.startsWith("sha256="))return false;const k=await crypto.subtle.importKey("raw",new TextEncoder().encode(secret),{name:"HMAC",hash:"SHA-256"},false,["sign"]),d=new Uint8Array(await crypto.subtle.sign("HMAC",k,new TextEncoder().encode(raw))),hex=[...d].map(x=>x.toString(16).padStart(2,"0")).join("");return hex===h.slice(7)}
 async function wa(req,env){
- const u=new URL(req.url);if(req.method==="GET"){if(u.searchParams.get("hub.mode")==="subscribe"&&u.searchParams.get("hub.verify_token")===env.WA_VERIFY_TOKEN)return new Response(u.searchParams.get("hub.challenge")||"");return new Response("Forbidden",{status:403})}
- const raw=await req.text();if(!await signature(req,raw,env.META_APP_SECRET))return new Response("Invalid signature",{status:401});
- const event=dec(raw),v=event?.entry?.flatMap(x=>x.changes||[]).find(x=>x.field==="messages")?.value,m=v?.messages?.[0],statuses=v?.statuses||[];if(!m&&statuses.length){for(const s of statuses)await env.DB.prepare("INSERT INTO wa_delivery_events(id,message_id,status,recipient_id,event_timestamp,error_json) VALUES(?,?,?,?,?,?)").bind(uid(),s.id,s.status,s.recipient_id||null,s.timestamp||null,JSON.stringify(s.errors||[])).run();return new Response("EVENT_RECEIVED")}if(!m)return new Response("EVENT_RECEIVED");
- const phone=m.from,text=String(m.text?.body||m.button?.text||m.interactive?.button_reply?.title||m.interactive?.list_reply?.title||"").trim();if(m.id&&await env.DB.prepare("SELECT id FROM wa_messages WHERE message_id=?").bind(m.id).first())return new Response("EVENT_RECEIVED");
- if(/^stop$/i.test(text)){await env.DB.prepare("UPDATE conversations SET state='stopped' WHERE wa_id=?").bind(phone).run();await send(env,phone,{type:"text",text:{body:"You have opted out. Send START to register again."}});return new Response("EVENT_RECEIVED")}
- let form=await env.DB.prepare("SELECT * FROM forms WHERE status='published' ORDER BY created_at LIMIT 1").first();if(!form){await send(env,phone,{type:"text",text:{body:"Registrations are unavailable right now."}});return new Response("EVENT_RECEIVED")}
- let c=await env.DB.prepare("SELECT * FROM conversations WHERE wa_id=? AND form_id=?").bind(phone,form.id).first();
- if(!c||/^start$|^hello$|^hi$|^register$/i.test(text)||c.state==="stopped"||c.state==="complete"){
-  const sid=uid(),cid=uid();await env.DB.prepare("INSERT INTO submissions(id,form_id,source,contact_phone,status) VALUES(?,?,'whatsapp',?,'incomplete')").bind(sid,form.id,phone).run();
-  await env.DB.prepare("INSERT INTO conversations(id,wa_id,form_id,submission_id,state) VALUES(?,?,?,?,'awaiting_consent') ON CONFLICT(wa_id,form_id) DO UPDATE SET id=excluded.id,submission_id=excluded.submission_id,state='awaiting_consent',current_field_id=NULL,updated_at=datetime('now')").bind(cid,phone,form.id,sid).run();
-  c=await env.DB.prepare("SELECT * FROM conversations WHERE wa_id=? AND form_id=?").bind(phone,form.id).first();if(m.id)await env.DB.prepare("INSERT OR IGNORE INTO wa_messages(id,conversation_id,direction,message_type,message_id,body) VALUES(?,?,?,?,?,?)").bind(uid(),c.id,"in",m.type||"text",m.id,text).run();await send(env,phone,{type:"text",text:{body:"Welcome to "+form.title+". Before we begin, reply YES to agree that your answers and phone number may be used to process this registration. Reply NO to cancel, or STOP to opt out."}});return new Response("EVENT_RECEIVED");
+ const u=new URL(req.url);
+ if(req.method==="GET"){
+  if(u.searchParams.get("hub.mode")==="subscribe"&&u.searchParams.get("hub.verify_token")===env.WA_VERIFY_TOKEN)return new Response(u.searchParams.get("hub.challenge")||"");
+  return new Response("Forbidden",{status:403});
  }
- if(c.state==="awaiting_consent"){
-  if(/^no$|^cancel$/i.test(text)){await env.DB.prepare("UPDATE conversations SET state='stopped' WHERE id=?").bind(c.id).run();await send(env,phone,{type:"text",text:{body:"No problem. Your registration has been cancelled. Send START if you change your mind."}});return new Response("EVENT_RECEIVED")}
-  if(!/^yes$|^agree$|^i agree$/i.test(text)){await send(env,phone,{type:"text",text:{body:"Please reply YES to consent or NO to cancel."}});return new Response("EVENT_RECEIVED")}
-  await env.DB.prepare("UPDATE submissions SET consent=1 WHERE id=?").bind(c.submission_id).run();
-  await env.DB.prepare("UPDATE conversations SET state='active' WHERE id=?").bind(c.id).run();
+ const raw=await req.text();
+ if(!await signature(req,raw,env.META_APP_SECRET))return new Response("Invalid signature",{status:401});
+ const event=dec(raw);
+ const changes=event?.entry?.flatMap(x=>x.changes||[])||[];
+ const value=changes.find(x=>x.field==="messages")?.value;
+ if(!value)return new Response("EVENT_RECEIVED");
+ for(const status of value.statuses||[]){
+  await env.DB.prepare("INSERT INTO wa_delivery_events(id,message_id,status,recipient_id,event_timestamp,error_json) VALUES(?,?,?,?,?,?)").bind(uid(),status.id,status.status,status.recipient_id||null,status.timestamp||null,JSON.stringify(status.errors||[])).run();
  }
- if(m.id){const old=await env.DB.prepare("SELECT id FROM wa_messages WHERE message_id=?").bind(m.id).first();if(old)return new Response("EVENT_RECEIVED");await env.DB.prepare("INSERT INTO wa_messages(id,conversation_id,direction,message_type,message_id,body) VALUES(?,?,'in',?,?,?)").bind(uid(),c.id,m.type||"text",m.id,text).run()}
- const fs=await getFields(env.DB,form.id);let idx=c.current_field_id?Math.max(0,fs.findIndex(x=>x.id===c.current_field_id)):0;
- if(c.current_field_id){const f=fs[idx],opts=dec(f.options_json)||[];let value=text;
-  if(["single_select","select"].includes(f.type)){const n=Number(text),choice=opts.find(x=>String(x).toLowerCase()===text.toLowerCase())||opts[n-1];if(!choice){await send(env,phone,{type:"text",text:{body:"Reply with one option number:\n"+opts.map((x,i)=>(i+1)+". "+x).join("\n")}});return new Response("EVENT_RECEIVED")}value=choice}
-  if(f.type==="multi_select"){const nums=text.split(",").map(x=>Number(x.trim()));value=nums.map(n=>opts[n-1]).filter(Boolean);if(!value.length){await send(env,phone,{type:"text",text:{body:"Choose option numbers separated by commas:\n"+opts.map((x,i)=>(i+1)+". "+x).join("\n")}});return new Response("EVENT_RECEIVED")}}
-  if(!value&&f.required){await send(env,phone,{type:"text",text:{body:"This answer is required. Please try again."}});return new Response("EVENT_RECEIVED")}
-  await env.DB.prepare("INSERT INTO responses(id,submission_id,field_id,value_json) VALUES(?,?,?,?)").bind(uid(),c.submission_id,f.id,JSON.stringify(value)).run();idx++;
+ for(const m of value.messages||[]){
+  const phone=m.from;
+  const interactive=m.interactive?.button_reply||m.interactive?.list_reply;
+  const text=String(m.text?.body||m.button?.text||interactive?.title||"").trim();
+  const messageId=m.id;
+  if(!phone||!text)continue;
+  if(messageId&&await env.DB.prepare("SELECT id FROM wa_messages WHERE message_id=?").bind(messageId).first())continue;
+  let form=await env.DB.prepare("SELECT * FROM forms WHERE status='published' ORDER BY created_at LIMIT 1").first();
+  if(!form){await send(env,phone,{type:"text",text:{body:"Registrations are unavailable right now. Please try again later."}});continue;}
+  let c=await env.DB.prepare("SELECT * FROM conversations WHERE wa_id=? AND form_id=?").bind(phone,form.id).first();
+  const deliver=async(payload,body)=>{
+   try{
+    const result=await send(env,phone,payload);
+    const outboundId=result?.messages?.[0]?.id||null;
+    if(c)await env.DB.prepare("INSERT INTO wa_messages(id,conversation_id,direction,message_type,message_id,body) VALUES(?,?,'out',?,?,?)").bind(uid(),c.id,payload.type||"text",outboundId,body||payload.text?.body||"").run();
+    return result;
+   }catch(error){console.error("WFORM_WHATSAPP_SEND_ERROR",JSON.stringify({to:phone,error:String(error?.message||error),at:new Date().toISOString()}));throw error;}
+  };
+  const say=body=>deliver({type:"text",text:{body}},body);
+  if(/^stop$/i.test(text)){
+   if(c)await env.DB.prepare("UPDATE conversations SET state='stopped' WHERE id=?").bind(c.id).run();
+   await say("You have opted out. You will not receive registration messages. Send START whenever you want to begin again.");
+   continue;
+  }
+  if(!c||/^start$|^hello$|^hi$|^register$/i.test(text)||c.state==="stopped"||c.state==="complete"){
+   const sid=uid(),cid=uid();
+   await env.DB.prepare("INSERT INTO submissions(id,form_id,source,contact_phone,status) VALUES(?,?,'whatsapp',?,'incomplete')").bind(sid,form.id,phone).run();
+   await env.DB.prepare("INSERT INTO conversations(id,wa_id,form_id,submission_id,state) VALUES(?,?,?,?,'awaiting_consent') ON CONFLICT(wa_id,form_id) DO UPDATE SET id=excluded.id,submission_id=excluded.submission_id,state='awaiting_consent',current_field_id=NULL,updated_at=datetime('now')").bind(cid,phone,form.id,sid).run();
+   c=await env.DB.prepare("SELECT * FROM conversations WHERE wa_id=? AND form_id=?").bind(phone,form.id).first();
+   if(messageId)await env.DB.prepare("INSERT OR IGNORE INTO wa_messages(id,conversation_id,direction,message_type,message_id,body) VALUES(?,?,'in',?,?,?)").bind(uid(),c.id,m.type||"text",messageId,text).run();
+   await say("Welcome to "+form.title+". I will guide you through the registration one question at a time.\n\nReply YES to agree that your answers and phone number may be used for this registration. Reply NO to cancel. You can type SKIP to skip a question, BACK to return to the previous question, REPEAT to hear a question again, HELP for instructions, or STOP to opt out.");
+   continue;
+  }
+  if(messageId)await env.DB.prepare("INSERT OR IGNORE INTO wa_messages(id,conversation_id,direction,message_type,message_id,body) VALUES(?,?,'in',?,?,?)").bind(uid(),c.id,m.type||"text",messageId,text).run();
+  if(c.state==="stopped"){await say("You are opted out. Send START to begin a new registration.");continue;}
+  if(c.state==="awaiting_consent"){
+   if(/^no$|^cancel$/i.test(text)){
+    await env.DB.prepare("UPDATE conversations SET state='stopped' WHERE id=?").bind(c.id).run();
+    await say("Your registration has been cancelled. Send START if you change your mind.");
+    continue;
+   }
+   if(!/^yes$|^agree$|^i agree$/i.test(text)){await say("Please reply YES to continue or NO to cancel.");continue;}
+   await env.DB.prepare("UPDATE submissions SET consent=1 WHERE id=?").bind(c.submission_id).run();
+   await env.DB.prepare("UPDATE conversations SET state='active' WHERE id=?").bind(c.id).run();
+   c={...c,state:"active"};
+  }
+  if(c.state!=="active"){await say("This registration is already complete. Send START to submit another registration.");continue;}
+  const fs=await getFields(env.DB,form.id);
+  if(!fs.length){await env.DB.prepare("UPDATE submissions SET status='complete',updated_at=datetime('now') WHERE id=?").bind(c.submission_id).run();await env.DB.prepare("UPDATE conversations SET state='complete',current_field_id=NULL WHERE id=?").bind(c.id).run();await say(form.confirmation_message||"Thank you. Your registration is complete.");continue;}
+  let idx=c.current_field_id?fs.findIndex(x=>x.id===c.current_field_id):0;
+  if(idx<0)idx=0;
+  const command=text.toLowerCase().trim();
+  if(["help","menu","commands"].includes(command)){
+   await say("Here are the chat commands:\nSKIP — skip this question, even if it is marked required.\nBACK — return to the previous question.\nREPEAT — show this question again.\nCANCEL — cancel this registration.\nSTART — start a fresh registration.\nSTOP — opt out.\nYou can also reply normally or tap the choices shown.");
+   // Keep the current question active and repeat it below.
+  }else if(["cancel","quit","exit"].includes(command)){
+   await env.DB.prepare("UPDATE conversations SET state='stopped' WHERE id=?").bind(c.id).run();
+   await env.DB.prepare("UPDATE submissions SET status='cancelled',updated_at=datetime('now') WHERE id=?").bind(c.submission_id).run();
+   await say("Your registration has been cancelled. Send START whenever you want to begin again.");
+   continue;
+  }else if(command==="back"){
+   if(idx<=0){await say("You are already at the first question.");}
+   else{
+    idx--;
+    const previous=fs[idx];
+    await env.DB.prepare("DELETE FROM responses WHERE submission_id=? AND field_id=?").bind(c.submission_id,previous.id).run();
+    await env.DB.prepare("UPDATE conversations SET current_field_id=?,updated_at=datetime('now') WHERE id=?").bind(previous.id,c.id).run();
+   }
+  }else if(command==="repeat"){
+   // Repeat the current question without saving an answer.
+  }else if(idx<fs.length){
+   const f=fs[idx],opts=dec(f.options_json)||[];
+   if(command==="skip"){
+    await env.DB.prepare("INSERT INTO responses(id,submission_id,field_id,value_json) VALUES(?,?,?,?) ON CONFLICT(submission_id,field_id) DO UPDATE SET value_json=excluded.value_json").bind(uid(),c.submission_id,f.id,JSON.stringify("__SKIPPED__")).run();
+    idx++;
+   }else{
+    let answer=text;
+    if(["single_select","select"].includes(f.type)){
+     const n=Number(text.replace(/^choice_/,""));
+     const choice=opts.find(x=>String(x).toLowerCase()===text.toLowerCase())||opts[n-1];
+     if(!choice){await say("Please choose one of the options shown, or type SKIP.\n"+opts.map((x,i)=>(i+1)+". "+x).join("\n"));continue;}
+     answer=choice;
+    }
+    if(f.type==="multi_select"){
+     const nums=text.split(",").map(x=>Number(x.trim().replace(/^choice_/,"")));
+     const selected=nums.map(n=>opts[n-1]).filter(Boolean);
+     if(!selected.length){await say("Choose option numbers separated by commas, or type SKIP:\n"+opts.map((x,i)=>(i+1)+". "+x).join("\n"));continue;}
+     answer=selected;
+    }
+    if(answer===""&&f.required){await say("This answer is required. Please enter an answer or type SKIP.");continue;}
+    await env.DB.prepare("INSERT INTO responses(id,submission_id,field_id,value_json) VALUES(?,?,?,?) ON CONFLICT(submission_id,field_id) DO UPDATE SET value_json=excluded.value_json").bind(uid(),c.submission_id,f.id,JSON.stringify(answer)).run();
+    idx++;
+   }
+  }
+  if(idx>=fs.length){
+   await env.DB.prepare("UPDATE submissions SET status='complete',updated_at=datetime('now') WHERE id=?").bind(c.submission_id).run();
+   await env.DB.prepare("UPDATE conversations SET state='complete',current_field_id=NULL,updated_at=datetime('now') WHERE id=?").bind(c.id).run();
+   await say(form.confirmation_message||"Thank you. Your registration is complete.");
+   continue;
+  }
+  const f=fs[idx],opts=dec(f.options_json)||[];
+  await env.DB.prepare("UPDATE conversations SET current_field_id=?,updated_at=datetime('now') WHERE id=?").bind(f.id,c.id).run();
+  let prompt=f.label+(f.required?" (required)":" (optional)");
+  if(f.help_text)prompt+="\n"+f.help_text;
+  if(opts.length)prompt+="\n"+opts.map((x,i)=>(i+1)+". "+x).join("\n")+(f.type==="multi_select"?"\nFor multiple answers, separate option numbers with commas.":"");
+  prompt+="\n\nType SKIP to skip, BACK to go back, REPEAT to hear this again, or HELP for commands.";
+  let payload={type:"text",text:{body:prompt}};
+  if(["single_select","select"].includes(f.type)&&opts.length>0&&opts.length<=3){
+   payload={type:"interactive",interactive:{type:"button",body:{text:prompt},action:{buttons:opts.map((x,i)=>({type:"reply",reply:{id:"choice_"+(i+1),title:String(x).slice(0,20)}}))}}};
+  }else if(["single_select","select"].includes(f.type)&&opts.length>3&&opts.length<=10){
+   payload={type:"interactive",interactive:{type:"list",body:{text:prompt},action:{button:"Choose",sections:[{title:"Options",rows:opts.map((x,i)=>({id:"choice_"+(i+1),title:String(x).slice(0,24)}))}]}}};
+  }
+  await deliver(payload,prompt);
  }
- if(idx>=fs.length){await env.DB.prepare("UPDATE submissions SET status='complete',updated_at=datetime('now') WHERE id=?").bind(c.submission_id).run();await env.DB.prepare("UPDATE conversations SET state='complete',current_field_id=NULL WHERE id=?").bind(c.id).run();await send(env,phone,{type:"text",text:{body:form.confirmation_message||"Thank you. Your registration is complete."}})}
- else{const f=fs[idx],opts=dec(f.options_json)||[];await env.DB.prepare("UPDATE conversations SET current_field_id=?,updated_at=datetime('now') WHERE id=?").bind(f.id,c.id).run();let prompt=f.label+(f.required?" (required)":"");if(f.help_text)prompt+="\n"+f.help_text;if(opts.length)prompt+="\n"+opts.map((x,i)=>(i+1)+". "+x).join("\n")+(f.type==="multi_select"?"\nFor multiple answers, separate numbers with commas.":"");let payload={type:"text",text:{body:prompt}};if(["single_select","select"].includes(f.type)&&opts.length>0&&opts.length<=3){payload={type:"interactive",interactive:{type:"button",body:{text:prompt},action:{buttons:opts.map((x,i)=>({type:"reply",reply:{id:"choice_"+(i+1),title:String(x).slice(0,20)}}))}}}}else if(["single_select","select"].includes(f.type)&&opts.length>3&&opts.length<=10){payload={type:"interactive",interactive:{type:"list",body:{text:prompt},action:{button:"Choose",sections:[{title:"Options",rows:opts.map((x,i)=>({id:"choice_"+(i+1),title:String(x).slice(0,24)}))}]}}}}await send(env,phone,payload)}
  return new Response("EVENT_RECEIVED");
 }
 export default {async fetch(req,env){
