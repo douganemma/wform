@@ -22,9 +22,16 @@ async function wa(req,env){
  let c=await env.DB.prepare("SELECT * FROM conversations WHERE wa_id=? AND form_id=?").bind(phone,form.id).first();
  if(!c||/^start$|^hello$|^hi$|^register$/i.test(text)||c.state==="stopped"||c.state==="complete"){
   const sid=uid(),cid=uid();await env.DB.prepare("INSERT INTO submissions(id,form_id,source,contact_phone,status) VALUES(?,?,'whatsapp',?,'incomplete')").bind(sid,form.id,phone).run();
-  await env.DB.prepare("INSERT INTO conversations(id,wa_id,form_id,submission_id,state) VALUES(?,?,?,?,'active') ON CONFLICT(wa_id,form_id) DO UPDATE SET id=excluded.id,submission_id=excluded.submission_id,state='active',current_field_id=NULL,updated_at=datetime('now')").bind(cid,phone,form.id,sid).run();
-  c=await env.DB.prepare("SELECT * FROM conversations WHERE wa_id=? AND form_id=?").bind(phone,form.id).first();await send(env,phone,{type:"text",text:{body:"Welcome to "+form.title+". I will ask a few short questions. Reply STOP to opt out."}});
+  await env.DB.prepare("INSERT INTO conversations(id,wa_id,form_id,submission_id,state) VALUES(?,?,?,?,'awaiting_consent') ON CONFLICT(wa_id,form_id) DO UPDATE SET id=excluded.id,submission_id=excluded.submission_id,state='awaiting_consent',current_field_id=NULL,updated_at=datetime('now')").bind(cid,phone,form.id,sid).run();
+  c=await env.DB.prepare("SELECT * FROM conversations WHERE wa_id=? AND form_id=?").bind(phone,form.id).first();await send(env,phone,{type:"text",text:{body:"Welcome to "+form.title+". Before we begin, reply YES to agree that your answers and phone number may be used to process this registration. Reply NO to cancel, or STOP to opt out."}});return new Response("EVENT_RECEIVED");
  }
+ if(c.state==="awaiting_consent"){
+  if(/^no$|^cancel$/i.test(text)){await env.DB.prepare("UPDATE conversations SET state='stopped' WHERE id=?").bind(c.id).run();await send(env,phone,{type:"text",text:{body:"No problem. Your registration has been cancelled. Send START if you change your mind."}});return new Response("EVENT_RECEIVED")}
+  if(!/^yes$|^agree$|^i agree$/i.test(text)){await send(env,phone,{type:"text",text:{body:"Please reply YES to consent or NO to cancel."}});return new Response("EVENT_RECEIVED")}
+  await env.DB.prepare("UPDATE submissions SET consent=1 WHERE id=?").bind(c.submission_id).run();
+  await env.DB.prepare("UPDATE conversations SET state='active' WHERE id=?").bind(c.id).run();
+ }
+ if(m.id){const old=await env.DB.prepare("SELECT id FROM wa_messages WHERE message_id=?").bind(m.id).first();if(old)return new Response("EVENT_RECEIVED");await env.DB.prepare("INSERT INTO wa_messages(id,conversation_id,direction,message_type,message_id,body) VALUES(?,?,'in',?,?,?)").bind(uid(),c.id,m.type||"text",m.id,text).run()}
  const fs=await getFields(env.DB,form.id);let idx=c.current_field_id?Math.max(0,fs.findIndex(x=>x.id===c.current_field_id)):0;
  if(c.current_field_id){const f=fs[idx],opts=dec(f.options_json)||[];let value=text;
   if(["single_select","select"].includes(f.type)){const n=Number(text),choice=opts.find(x=>String(x).toLowerCase()===text.toLowerCase())||opts[n-1];if(!choice){await send(env,phone,{type:"text",text:{body:"Reply with one option number:\n"+opts.map((x,i)=>(i+1)+". "+x).join("\n")}});return new Response("EVENT_RECEIVED")}value=choice}
@@ -33,7 +40,7 @@ async function wa(req,env){
   await env.DB.prepare("INSERT INTO responses(id,submission_id,field_id,value_json) VALUES(?,?,?,?)").bind(uid(),c.submission_id,f.id,JSON.stringify(value)).run();idx++;
  }
  if(idx>=fs.length){await env.DB.prepare("UPDATE submissions SET status='complete',updated_at=datetime('now') WHERE id=?").bind(c.submission_id).run();await env.DB.prepare("UPDATE conversations SET state='complete',current_field_id=NULL WHERE id=?").bind(c.id).run();await send(env,phone,{type:"text",text:{body:form.confirmation_message||"Thank you. Your registration is complete."}})}
- else{const f=fs[idx],opts=dec(f.options_json)||[];await env.DB.prepare("UPDATE conversations SET current_field_id=?,updated_at=datetime('now') WHERE id=?").bind(f.id,c.id).run();let prompt=f.label+(f.required?" (required)":"");if(f.help_text)prompt+="\n"+f.help_text;if(opts.length)prompt+="\n"+opts.map((x,i)=>(i+1)+". "+x).join("\n")+(f.type==="multi_select"?"\nFor multiple answers, separate numbers with commas.":"");await send(env,phone,{type:"text",text:{body:prompt}})}
+ else{const f=fs[idx],opts=dec(f.options_json)||[];await env.DB.prepare("UPDATE conversations SET current_field_id=?,updated_at=datetime('now') WHERE id=?").bind(f.id,c.id).run();let prompt=f.label+(f.required?" (required)":"");if(f.help_text)prompt+="\n"+f.help_text;if(opts.length)prompt+="\n"+opts.map((x,i)=>(i+1)+". "+x).join("\n")+(f.type==="multi_select"?"\nFor multiple answers, separate numbers with commas.":"");let payload={type:"text",text:{body:prompt}};if(["single_select","select"].includes(f.type)&&opts.length>0&&opts.length<=3){payload={type:"interactive",interactive:{type:"button",body:{text:prompt},action:{buttons:opts.map((x,i)=>({type:"reply",reply:{id:"choice_"+(i+1),title:String(x).slice(0,20)}}))}}}}else if(["single_select","select"].includes(f.type)&&opts.length>3&&opts.length<=10){payload={type:"interactive",interactive:{type:"list",body:{text:prompt},action:{button:"Choose",sections:[{title:"Options",rows:opts.map((x,i)=>({id:"choice_"+(i+1),title:String(x).slice(0,24)}))}]}}}}await send(env,phone,payload)}
  return new Response("EVENT_RECEIVED");
 }
 export default {async fetch(req,env){
