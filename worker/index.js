@@ -86,7 +86,8 @@ async function wa(req,env){
   }
   if(messageId)await env.DB.prepare("INSERT OR IGNORE INTO wa_messages(id,conversation_id,direction,message_type,message_id,body) VALUES(?,?,'in',?,?,?)").bind(uid(),c.id,m.type||"text",messageId,text).run();
   if(c.state==="stopped"){await say("You are opted out. Send START to begin a new registration.");continue;}
-  let justConsented=false;\n  if(c.state==="awaiting_consent"){
+  let justConsented=false;
+  if(c.state==="awaiting_consent"){
    if(/^no$|^cancel$/i.test(text)){
     await env.DB.prepare("UPDATE conversations SET state='stopped' WHERE id=?").bind(c.id).run();
     await say("Your registration has been cancelled. Send START if you change your mind.");
@@ -96,6 +97,7 @@ async function wa(req,env){
    await env.DB.prepare("UPDATE submissions SET consent=1 WHERE id=?").bind(c.submission_id).run();
    await env.DB.prepare("UPDATE conversations SET state='active' WHERE id=?").bind(c.id).run();
    c={...c,state:"active"};
+   justConsented=true;
   }
   if(c.state!=="active"){await say("This registration is already complete. Send START to submit another registration.");continue;}
   const fs=await getFields(env.DB,form.id);
