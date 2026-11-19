@@ -110,7 +110,7 @@ async function wa(req,env){
    prompt+="\\n\\nType SKIP to skip, BACK to go back, REPEAT to hear this again, or HELP for commands.";
    let payload={type:"text",text:{body:prompt}};
    if(["single_select","select"].includes(first.type)&&opts.length>0&&opts.length<=3)payload={type:"interactive",interactive:{type:"button",body:{text:prompt},action:{buttons:opts.map((x,i)=>({type:"reply",reply:{id:"choice_"+(i+1),title:String(x).slice(0,20)}}))}}};
-   else if(["single_select","select"].includes(first.type)&&opts.length>3&&opts.length<=10)payload={type:"interactive",interactive:{type:"list",body:{text:prompt},action:{button:"Choose",sections:[{title:"Options",rows:opts.map((x,i)=>({id:"choice_"+(i+1),title:String(x).slice(0,24)}))}]}};
+   else if(["single_select","select"].includes(first.type)&&opts.length>3&&opts.length<=10){payload={type:"interactive",interactive:{type:"list",body:{text:prompt},action:{button:"Choose",sections:[{title:"Options",rows:opts.map((x,i)=>({id:"choice_"+(i+1),title:String(x).slice(0,24)}))}]}}};}
    await deliver(payload,prompt);continue;
   }
   if(!fs.length){await env.DB.prepare("UPDATE submissions SET status='complete',updated_at=datetime('now') WHERE id=?").bind(c.submission_id).run();await env.DB.prepare("UPDATE conversations SET state='complete',current_field_id=NULL WHERE id=?").bind(c.id).run();await say(form.confirmation_message||"Thank you. Your registration is complete.");continue;}
