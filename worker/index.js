@@ -52,7 +52,7 @@ async function wa(req,env){
   }
   const startMatch=text.match(/^start(?:\s+([a-z0-9-]+))?$/i);
   let c=null,form=null;
-  if(startMatch&&startMatch[1])form=await env.DB.prepare("SELECT * FROM forms WHERE slug=? AND status='published'").bind(startMatch[1]).first();
+  if(startMatch&&startMatch[1])form=await env.DB.prepare("SELECT * FROM forms WHERE slug=? AND status='published'").bind(startMatch[1].toLowerCase()).first();
   else{
    c=await env.DB.prepare("SELECT * FROM conversations WHERE wa_id=? ORDER BY updated_at DESC LIMIT 1").bind(phone).first();
    if(c)form=await env.DB.prepare("SELECT * FROM forms WHERE id=? AND status='published'").bind(c.form_id).first();
@@ -78,7 +78,7 @@ async function wa(req,env){
   if(!c||startMatch||/^hello$|^hi$|^register$/i.test(text)||c.state==="stopped"||c.state==="complete"){
    const sid=uid(),cid=uid();
    await env.DB.prepare("INSERT INTO submissions(id,form_id,source,contact_phone,status) VALUES(?,?,'whatsapp',?,'incomplete')").bind(sid,form.id,phone).run();
-   await env.DB.prepare("INSERT INTO conversations(id,wa_id,form_id,submission_id,state) VALUES(?,?,?,?,'awaiting_consent') ON CONFLICT(wa_id,form_id) DO UPDATE SET id=excluded.id,submission_id=excluded.submission_id,state='awaiting_consent',current_field_id=NULL,updated_at=datetime('now')").bind(cid,phone,form.id,sid).run();
+   await env.DB.prepare("INSERT INTO conversations(id,wa_id,form_id,submission_id,state) VALUES(?,?,?,?,'awaiting_consent') ON CONFLICT(wa_id,form_id) DO UPDATE SET submission_id=excluded.submission_id,state='awaiting_consent',current_field_id=NULL,updated_at=datetime('now')").bind(cid,phone,form.id,sid).run();
    c=await env.DB.prepare("SELECT * FROM conversations WHERE wa_id=? AND form_id=?").bind(phone,form.id).first();
    if(messageId)await env.DB.prepare("INSERT OR IGNORE INTO wa_messages(id,conversation_id,direction,message_type,message_id,body) VALUES(?,?,'in',?,?,?)").bind(uid(),c.id,m.type||"text",messageId,text).run();
    await say("Welcome to "+form.title+". I will guide you through the registration one question at a time.\n\nReply YES to agree that your answers and phone number may be used for this registration. Reply NO to cancel. You can type SKIP to skip a question, BACK to return to the previous question, REPEAT to hear a question again, HELP for instructions, or STOP to opt out. Send FORMS to see other published forms.");
