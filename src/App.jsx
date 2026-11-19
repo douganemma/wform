@@ -12,7 +12,7 @@ export default function App(){
  const loadInbox=async()=>{IL(true);try{const rows=await api("/api/admin/whatsapp/inbox");TH(rows);if(selectedThread){const still=rows.find(x=>x.id===selectedThread.id);if(still)await openThread(still,false)}}catch(e){N(e.message)}finally{IL(false)}};
  const openThread=async(thread,update=true)=>{if(update)ST(thread);try{const d=await api("/api/admin/whatsapp/inbox/"+encodeURIComponent(thread.id));ST(d.conversation);TM(d.messages||[])}catch(e){N(e.message)}};
  const sendReply=async e=>{e.preventDefault();if(!selectedThread||!replyText.trim())return;RP(true);try{await api("/api/admin/whatsapp/inbox/"+encodeURIComponent(selectedThread.id),{method:"POST",body:JSON.stringify({body:replyText.trim()})});RT("");await openThread(selectedThread);await loadInbox()}catch(e){N("Could not send: "+e.message)}finally{RP(false)}};
- useEffect(()=>{if(page!=="whatsapp")return;loadInbox();const timer=setInterval(loadInbox,10000);return()=>clearInterval(timer)},[page]);
+ useEffect(()=>{if(page!=="whatsapp")return;loadInbox();const timer=setInterval(loadInbox,10000);return()=>clearInterval(timer)},[page,selectedThread?.id]);
 
  const filtered=subs.filter(s=>JSON.stringify(s).toLowerCase().includes(search.toLowerCase()));
  const create=async()=>{try{const f=await api("/api/admin/forms",{method:"POST",body:JSON.stringify({title:"New form",status:"draft"})});const item={id:f.id,title:"New form",slug:f.slug,status:"draft"};F([item,...forms]);edit(item)}catch{const item={id:crypto.randomUUID(),title:"New form",slug:"new-form",status:"draft"};F([item,...forms]);edit(item)}};
