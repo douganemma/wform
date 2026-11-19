@@ -1,59 +1,71 @@
 # W-Form — setup and deployment
 
-## What has been built
+## Current deployment
+- Cloudflare Worker API: `w-form-api`
+- Worker URL: `https://w-form-api.edougan.workers.dev`
+- D1 database: `wform-db` (already created and schema applied)
+- Website assets are deployed by the GitHub Actions workflow after its Cloudflare credentials are added.
+- The Worker currently has the API code and D1 binding. The React website is not yet published until the deployment workflow completes successfully.
 
-- Responsive admin workspace with overview, registrations, forms, visual builder, WhatsApp setup and settings pages.
-- Reusable form records and configurable question types: text, long text, email, phone, number, date, single choice, multiple choice, dropdown and checkbox.
-- Starter registration form with name, title (Mr/Mrs/Ms/Dr/Other), phone, email and interests.
-- Public registration endpoint and shared D1 data model for website and WhatsApp responses.
-- Submissions search, channel/source and status fields, timestamps and CSV and XLSX export endpoints/actions, including response values.
-- Cloudflare Worker API, D1 schema and WhatsApp Cloud API webhook foundation, including sent/delivered/read/failed status event capture.
-- Webhook verification handshake, HMAC signature validation using Meta app secret, and delivery-status event capture.
-- Conversational question flow, single-choice validation, multiple-choice parsing, incomplete conversation resumption, STOP opt-out, START restart and confirmation response.
-- Admin API protected by Cloudflare Access JWT validation.
+## First-time deployment through GitHub Actions
 
-## Local setup
+1. Open the repository: https://github.com/douganemma/wform
+2. Go to **Settings → Secrets and variables → Actions**.
+3. Under **Repository secrets**, add:
+   - `CLOUDFLARE_API_TOKEN` — create a Cloudflare API token with permission to edit Workers scripts and deploy Workers, and access the W-Form D1 database as required by Wrangler.
+4. Under **Repository variables**, add:
+   - `CLOUDFLARE_ACCOUNT_ID` — your Cloudflare account ID.
+5. Open **Actions → Deploy W-Form to Cloudflare → Run workflow**. Wait for the job to finish successfully. Later pushes to the main branch will deploy automatically.
+6. Do not add Meta or WhatsApp credentials to GitHub. Add those directly as encrypted Worker secrets in Cloudflare.
 
-1. Install Node.js 20 or later.
-2. Clone the repository and run npm install.
-3. Create a Cloudflare D1 database named wform-db. Update database_id in wrangler.jsonc with the real ID.
-4. Apply db/schema.sql to your local D1 database: npx wrangler d1 execute wform-db --local --file=db/schema.sql
-5. Build the front end: npm run build.
-6. Run the Worker locally with npx wrangler dev. The Worker serves the built files from dist and exposes the API on the same origin.
+## Add WhatsApp secrets in Cloudflare
 
-## Deploy to Cloudflare
+Open **Cloudflare Dashboard → Workers & Pages → w-form-api → Settings → Variables and Secrets → Add**. Choose **Secret** (not Plaintext) for each of these:
 
-1. Create the D1 database and update wrangler.jsonc with its database ID.
-2. Apply the schema to the remote database: npx wrangler d1 execute wform-db --remote --file=db/schema.sql
-3. Create a Cloudflare Access self-hosted application for the W-Form hostname. Require authentication and allow only the intended administrators.
-4. Configure Worker variables ACCESS_TEAM_DOMAIN and ACCESS_AUD. ACCESS_TEAM_DOMAIN is your Cloudflare Access team domain without https://; ACCESS_AUD is the Access application's audience tag.
-5. Add the following as encrypted Worker secrets, never as source files or GitHub variables:
-   - WA_ACCESS_TOKEN
-   - WA_PHONE_NUMBER_ID
-   - WA_VERIFY_TOKEN
-   - META_APP_SECRET
-6. Build and deploy: npm run build, then npx wrangler deploy.
-7. In Meta's developer dashboard, configure the webhook URL as https://YOUR-HOSTNAME/webhooks/whatsapp, enter the same verify token, subscribe to messages and use the same Meta app secret.
-8. Send a test registration from a phone number that has opted in.
+- `WA_ACCESS_TOKEN` — the permanent WhatsApp Cloud API system-user access token.
+- `WA_VERIFY_TOKEN` — a random phrase you create. Use the exact same value in Meta's webhook verification field.
+- `META_APP_SECRET` — the App Secret from Meta. Because the previous value was shared in a chat, regenerate/rotate it in Meta first, then paste the new value here.
 
-The Graph API version is pinned to v27.0 in the Worker configuration and can be changed with WA_GRAPH_VERSION. Meta's official documentation currently lists v27.0 as the latest version. Meta currently lists v27.0 as the latest Graph API version.\n\n## WhatsApp setup to complete in the later session
+Save each secret and redeploy the Worker if Cloudflare prompts you.
 
-The WhatsApp Business Account ID, phone-number ID and Meta App ID have now been added to the Worker configuration. We will later need the display number, display-name/verification status, permanent access token, app secret, webhook verify token and chosen registration form. Credentials must be entered as encrypted Cloudflare Worker secrets, not pasted into chat or committed to GitHub.
+**Do not add these as secrets:** `WA_PHONE_NUMBER_ID`, `WA_BUSINESS_ACCOUNT_ID`, and `META_APP_ID` are identifiers already configured as non-secret Worker variables in `wrangler.jsonc`.
 
-## Important current limitations
+## Configure Cloudflare Access for the admin API
 
-This is the first build foundation, not yet a production-certified release. Before collecting real personal data, complete and test the deployment checklist and review local privacy and data-protection obligations.
+1. In Cloudflare Zero Trust, create an Access application for the W-Form hostname.
+2. Protect only the admin API path `/api/admin/*`. Keep `/webhooks/whatsapp` and public registration routes outside the Access login requirement so Meta and registrants can reach them.
+3. Add an allow policy for your administrator email address.
+4. In **Workers & Pages → w-form-api → Settings → Variables and Secrets**, add these as **Plaintext variables**:
+   - `ACCESS_TEAM_DOMAIN` — your Zero Trust team domain, without `https://` (example format: `your-team.cloudflareaccess.com`).
+   - `ACCESS_AUD` — the Access application's AUD tag.
+5. Redeploy after adding the variables.
 
-- The current WhatsApp flow starts the first published form. Per-form selection and admin assignment of a WhatsApp flow are not yet exposed in the UI.
-- Multi-select is collected by asking the user to reply with comma-separated option numbers. WhatsApp does not offer a native multi-select list control.
-- The webhook currently handles incoming message events and basic text/button/list reply text. Delivery-status reporting, message deduplication, approved template-message management, media/document intake, retry queueing and advanced opt-in management still need implementation and testing.
-- The bot does not yet send a dedicated consent question before asking form questions. Configure a consent/opt-in step and approved privacy notice before live use.
-- The public preview currently renders the starter form. Dynamic public form rendering from the form builder, conditional questions, file upload and per-form public routes remain to be completed.
-- CSV export is available. XLSX export, detailed submission view/edit, bulk deletion, role levels, audit-log viewer and configurable retention/deletion tools remain to be completed.
-- Configure Cloudflare Access before exposing the admin interface. Admin API requests are rejected unless a valid Access JWT is supplied.
-- The frontend uses preview/fallback behaviour when the API cannot be reached. This is not a substitute for successful deployment and live end-to-end testing.
-- Do not add production phone numbers, access tokens, app secrets or real personal data to demo/test fixtures.
+## Configure Meta webhook
+
+In Meta for Developers → your W-Form app → WhatsApp → Configuration:
+
+- Callback URL: `https://w-form-api.edougan.workers.dev/webhooks/whatsapp`
+- Verify token: the exact value you stored as `WA_VERIFY_TOKEN`.
+- Subscribe to the `messages` webhook field.
+- Make sure the app secret in Meta is the same newly rotated value stored as `META_APP_SECRET`.
+
+Then send a test message to the connected WhatsApp Business phone number. The bot starts the first published form and asks for consent before collecting answers.
+
+## Security reminders
+
+- Never commit access tokens, app secrets, verify tokens or Cloudflare API tokens to GitHub.
+- Do not paste secrets into chat. Enter them directly in Cloudflare's Secret fields.
+- Restrict admin access with Cloudflare Access before using real registration data.
+- Test the complete web and WhatsApp journeys before production use and review applicable privacy/data-protection requirements.
+
+## Current product limitations
+
+This is a working foundation, not yet a production-certified release. The following still need implementation or end-to-end testing:
+- Dynamic public form rendering from the builder and per-form public routes (the current public preview is the starter form).
+- WhatsApp form assignment/selection, approved template management, media/document intake, retry queueing and advanced opt-in management.
+- Submission detail/edit screen, bulk deletion, role levels, audit-log viewer and retention/deletion tools.
+- Full live tests of webhook events, Cloudflare Access, exports and real WhatsApp messaging.
 
 ## Data model
 
-D1 tables: forms, form_fields, submissions, responses, conversations, wa_messages and audit_log. Website and WhatsApp submissions use the same forms and responses tables. Conversation state is tracked separately so an interrupted WhatsApp registration can resume.
+D1 tables: forms, form_fields, submissions, responses, conversations, wa_messages, wa_delivery_events and audit_log. Website and WhatsApp registrations share the forms and responses tables.
