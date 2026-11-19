@@ -1,12 +1,22 @@
 const j=(d,s=200)=>new Response(JSON.stringify(d),{status:s,headers:{"content-type":"application/json","cache-control":"no-store"}});
 const uid=()=>crypto.randomUUID(), dec=s=>{try{return JSON.parse(s)}catch{return null}}, slug=s=>String(s||"").toLowerCase().trim().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
 async function isAdmin(req,env){
- const token=req.headers.get("Cf-Access-Jwt-Assertion");if(!token||!env.ACCESS_TEAM_DOMAIN||!env.ACCESS_AUD)return false;
- try{const p=token.split("."),b64=x=>atob(x.replace(/-/g,"+").replace(/_/g,"/"));const head=JSON.parse(b64(p[0])),pay=JSON.parse(b64(p[1]));
- if(pay.aud!==env.ACCESS_AUD||pay.iss!=="https://"+env.ACCESS_TEAM_DOMAIN||pay.exp*1000<Date.now())return false;
- const cert=await(await fetch("https://"+env.ACCESS_TEAM_DOMAIN+"/cdn-cgi/access/certs")).json(),jwk=cert.keys.find(k=>k.kid===head.kid);if(!jwk)return false;
- const key=await crypto.subtle.importKey("jwk",jwk,{name:"RSASSA-PKCS1-v1_5",hash:"SHA-256"},false,["verify"]),sig=Uint8Array.from(b64(p[2]),c=>c.charCodeAt(0));
- return crypto.subtle.verify("RSASSA-PKCS1-v1_5",key,sig,new TextEncoder().encode(p[0]+"."+p[1]));
+ const token=req.headers.get("Cf-Access-Jwt-Assertion");
+ if(!token||!env.ACCESS_TEAM_DOMAIN||!env.ACCESS_AUD)return false;
+ try{
+  const parts=token.split(".");
+  if(parts.length!==3)return false;
+  const b64url=x=>{const s=x.replace(/-/g,"+").replace(/_/g,"/");return atob(s+"=".repeat((4-s.length%4)%4))};
+  const head=JSON.parse(b64url(parts[0])),pay=JSON.parse(b64url(parts[1]));
+  const audiences=Array.isArray(pay.aud)?pay.aud:[pay.aud];
+  if(!audiences.includes(env.ACCESS_AUD)||pay.iss!=="https://"+env.ACCESS_TEAM_DOMAIN||!Number.isFinite(pay.exp)||pay.exp*1000<Date.now())return false;
+  const response=await fetch("https://"+env.ACCESS_TEAM_DOMAIN+"/cdn-cgi/access/certs");
+  if(!response.ok)return false;
+  const cert=await response.json(),jwk=cert.keys?.find(k=>k.kid===head.kid);
+  if(!jwk)return false;
+  const key=await crypto.subtle.importKey("jwk",jwk,{name:"RSASSA-PKCS1-v1_5",hash:"SHA-256"},false,["verify"]);
+  const sig=Uint8Array.from(b64url(parts[2]),c=>c.charCodeAt(0));
+  return await crypto.subtle.verify("RSASSA-PKCS1-v1_5",key,sig,new TextEncoder().encode(parts[0]+"."+parts[1]));
  }catch{return false}
 }
 const getFields=async(db,id)=>(await db.prepare("SELECT * FROM form_fields WHERE form_id=? ORDER BY position").bind(id).all()).results||[];
