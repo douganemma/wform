@@ -110,7 +110,8 @@ async function wa(req,env){
   }else if(idx<fs.length){
    const f=fs[idx],opts=dec(f.options_json)||[];
    if(command==="skip"){
-    await env.DB.prepare("INSERT INTO responses(id,submission_id,field_id,value_json) VALUES(?,?,?,?) ON CONFLICT(submission_id,field_id) DO UPDATE SET value_json=excluded.value_json").bind(uid(),c.submission_id,f.id,JSON.stringify("__SKIPPED__")).run();
+    await env.DB.prepare("DELETE FROM responses WHERE submission_id=? AND field_id=?").bind(c.submission_id,f.id).run();
+    await env.DB.prepare("INSERT INTO responses(id,submission_id,field_id,value_json) VALUES(?,?,?,?)").bind(uid(),c.submission_id,f.id,JSON.stringify("__SKIPPED__")).run();
     idx++;
    }else{
     let answer=text;
@@ -127,7 +128,8 @@ async function wa(req,env){
      answer=selected;
     }
     if(answer===""&&f.required){await say("This answer is required. Please enter an answer or type SKIP.");continue;}
-    await env.DB.prepare("INSERT INTO responses(id,submission_id,field_id,value_json) VALUES(?,?,?,?) ON CONFLICT(submission_id,field_id) DO UPDATE SET value_json=excluded.value_json").bind(uid(),c.submission_id,f.id,JSON.stringify(answer)).run();
+    await env.DB.prepare("DELETE FROM responses WHERE submission_id=? AND field_id=?").bind(c.submission_id,f.id).run();
+    await env.DB.prepare("INSERT INTO responses(id,submission_id,field_id,value_json) VALUES(?,?,?,?)").bind(uid(),c.submission_id,f.id,JSON.stringify(answer)).run();
     idx++;
    }
   }
