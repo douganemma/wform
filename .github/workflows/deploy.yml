@@ -1,19 +1,6 @@
 name: Deploy W-Form to Cloudflare
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "worker/**"
-      - "db/**"
-      - "public/**"
-      - "index.html"
-      - "package.json"
-      - "package-lock.json"
-      - "vite.config.js"
-      - "wrangler.jsonc"
-      - ".github/workflows/deploy.yml"
 jobs:
   deploy:
     runs-on: ubuntu-latest
