@@ -55,9 +55,14 @@ async function wa(req,env){
 }
 export default {async fetch(req,env){
  const u=new URL(req.url),p=u.pathname;if(p==="/api/health")return j({ok:true,app:"W-Form"});if(p==="/webhooks/whatsapp")return wa(req,env);
+ if(p==="/api/admin/login"&&req.method==="GET"){
+  if(!env.ACCESS_TEAM_DOMAIN||!env.ACCESS_AUD)return j({error:"Cloudflare Access settings are missing"},500);
+  const target=new URL("https://"+env.ACCESS_TEAM_DOMAIN+"/cdn-cgi/access/login/"+encodeURIComponent(env.ACCESS_AUD));
+  target.searchParams.set("redirect_url",new URL("/",req.url).toString());
+  return Response.redirect(target.toString(),302);
+ }
  if(p.startsWith("/api/admin")&&!await isAdmin(req,env))return j({error:"Admin access required. Configure Cloudflare Access."},401);
  try{
- if(p==="/api/admin/login"&&req.method==="GET")return Response.redirect(new URL("/",req.url).toString(),302);
  if(p==="/api/public/forms"&&req.method==="GET")return j((await env.DB.prepare("SELECT id,title,slug,description FROM forms WHERE status='published'").all()).results);
  let pub=p.match(/^\/api\/public\/forms\/([^/]+)$/);if(pub&&req.method==="GET"){const f=await env.DB.prepare("SELECT * FROM forms WHERE slug=? AND status='published'").bind(pub[1]).first();return f?j({...f,fields:await getFields(env.DB,f.id)}):j({error:"Not found"},404)}
  if(p==="/api/public/submissions"&&req.method==="POST"){const b=await req.json(),f=await env.DB.prepare("SELECT * FROM forms WHERE slug=? AND status='published'").bind(b.slug).first();if(!f)return j({error:"Form not found"},404);if(!b.consent)return j({error:"Consent is required"},400);const fs=await getFields(env.DB,f.id),vals=b.values||{};for(const x of fs){const v=vals[x.field_key];if(x.required&&(v===undefined||v===null||v===""))return j({error:x.label+" is required"},400);if(v!==undefined&&["single_select","select","multi_select"].includes(x.type)){const a=Array.isArray(v)?v:[v],opts=dec(x.options_json)||[];if(a.some(z=>!opts.includes(z)))return j({error:"Invalid choice for "+x.label},400)}}const sid=uid();await env.DB.prepare("INSERT INTO submissions(id,form_id,source,contact_phone,contact_name,consent) VALUES(?,?,'web',?,?,1)").bind(sid,f.id,vals.phone||null,vals.full_name||null).run();for(const x of fs)if(Object.hasOwn(vals,x.field_key))await env.DB.prepare("INSERT INTO responses(id,submission_id,field_id,value_json) VALUES(?,?,?,?)").bind(uid(),sid,x.id,JSON.stringify(vals[x.field_key])).run();return j({ok:true,id:sid,message:f.confirmation_message},201)}
