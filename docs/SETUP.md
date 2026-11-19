@@ -6,7 +6,7 @@
 - Reusable form records and configurable question types: text, long text, email, phone, number, date, single choice, multiple choice, dropdown and checkbox.
 - Starter registration form with name, title (Mr/Mrs/Ms/Dr/Other), phone, email and interests.
 - Public registration endpoint and shared D1 data model for website and WhatsApp responses.
-- Submissions search, channel/source and status fields, timestamps and CSV export endpoint.
+- Submissions search, channel/source and status fields, timestamps and CSV and XLSX export endpoints/actions, including response values.
 - Cloudflare Worker API, D1 schema and WhatsApp Cloud API webhook foundation, including sent/delivered/read/failed status event capture.
 - Webhook verification handshake, HMAC signature validation using Meta app secret, and delivery-status event capture.
 - Conversational question flow, single-choice validation, multiple-choice parsing, incomplete conversation resumption, STOP opt-out, START restart and confirmation response.
