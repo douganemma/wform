@@ -36,7 +36,7 @@
 7. In Meta's developer dashboard, configure the webhook URL as https://YOUR-HOSTNAME/webhooks/whatsapp, enter the same verify token, subscribe to messages and use the same Meta app secret.
 8. Send a test registration from a phone number that has opted in.
 
-The Graph API version is pinned to v27.0 in the Worker configuration and can be changed with WA_GRAPH_VERSION. Meta currently lists v27.0 as the latest Graph API version.\n\n## WhatsApp setup to complete in the later session
+The Graph API version is pinned to v27.0 in the Worker configuration and can be changed with WA_GRAPH_VERSION. Meta's official documentation currently lists v27.0 as the latest version. Meta currently lists v27.0 as the latest Graph API version.\n\n## WhatsApp setup to complete in the later session
 
 The WhatsApp number and business-account properties are deliberately not collected now, as requested. We will later need the Meta app, WhatsApp Business Account ID, phone-number ID, display number, display-name/verification status, permanent access token, app secret, webhook verify token and chosen registration form. Credentials must be entered as encrypted Cloudflare Worker secrets, not pasted into chat or committed to GitHub.
 
