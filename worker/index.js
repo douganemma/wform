@@ -104,10 +104,10 @@ async function wa(req,env){
   if(justConsented&&fs.length){
    const first=fs[0],opts=dec(first.options_json)||[];
    await env.DB.prepare("UPDATE conversations SET current_field_id=?,updated_at=datetime('now') WHERE id=?").bind(first.id,c.id).run();
-   let prompt="Thank you. Consent recorded. Let's begin.\n\\n"+first.label+(first.required?" (required)":" (optional)");
-   if(first.help_text)prompt+="\\n"+first.help_text;
-   if(opts.length)prompt+="\\n"+opts.map((x,i)=>(i+1)+". "+x).join("\\n")+(first.type==="multi_select"?"\\nFor multiple answers, separate option numbers with commas.":"");
-   prompt+="\\n\\nType SKIP to skip, BACK to go back, REPEAT to hear this again, or HELP for commands.";
+   let prompt="Thank you. Consent recorded. Let us begin: "+first.label+(first.required?" (required)":" (optional)");
+   if(first.help_text)prompt+=". "+first.help_text;
+   if(opts.length)prompt+=" Options: "+opts.map((x,i)=>(i+1)+". "+x).join("; ")+(first.type==="multi_select"?". For multiple answers, separate option numbers with commas.":"");
+   prompt+=". Type SKIP to skip, BACK to go back, REPEAT to hear this again, or HELP for commands.";
    let payload={type:"text",text:{body:prompt}};
    if(["single_select","select"].includes(first.type)&&opts.length>0&&opts.length<=3)payload={type:"interactive",interactive:{type:"button",body:{text:prompt},action:{buttons:opts.map((x,i)=>({type:"reply",reply:{id:"choice_"+(i+1),title:String(x).slice(0,20)}}))}}};
    else if(["single_select","select"].includes(first.type)&&opts.length>3&&opts.length<=10){payload={type:"interactive",interactive:{type:"list",body:{text:prompt},action:{button:"Choose",sections:[{title:"Options",rows:opts.map((x,i)=>({id:"choice_"+(i+1),title:String(x).slice(0,24)}))}]}}};}
