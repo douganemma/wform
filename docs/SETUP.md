@@ -7,8 +7,8 @@
 - Starter registration form with name, title (Mr/Mrs/Ms/Dr/Other), phone, email and interests.
 - Public registration endpoint and shared D1 data model for website and WhatsApp responses.
 - Submissions search, channel/source and status fields, timestamps and CSV export endpoint.
-- Cloudflare Worker API, D1 schema and WhatsApp Cloud API webhook foundation.
-- Webhook verification handshake and HMAC signature validation using Meta app secret.
+- Cloudflare Worker API, D1 schema and WhatsApp Cloud API webhook foundation, including sent/delivered/read/failed status event capture.
+- Webhook verification handshake, HMAC signature validation using Meta app secret, and delivery-status event capture.
 - Conversational question flow, single-choice validation, multiple-choice parsing, incomplete conversation resumption, STOP opt-out, START restart and confirmation response.
 - Admin API protected by Cloudflare Access JWT validation.
 
@@ -36,7 +36,7 @@
 7. In Meta's developer dashboard, configure the webhook URL as https://YOUR-HOSTNAME/webhooks/whatsapp, enter the same verify token, subscribe to messages and use the same Meta app secret.
 8. Send a test registration from a phone number that has opted in.
 
-## WhatsApp setup to complete in the later session
+The Graph API version is pinned to v27.0 in the Worker configuration and can be changed with WA_GRAPH_VERSION. Meta currently lists v27.0 as the latest Graph API version.\n\n## WhatsApp setup to complete in the later session
 
 The WhatsApp number and business-account properties are deliberately not collected now, as requested. We will later need the Meta app, WhatsApp Business Account ID, phone-number ID, display number, display-name/verification status, permanent access token, app secret, webhook verify token and chosen registration form. Credentials must be entered as encrypted Cloudflare Worker secrets, not pasted into chat or committed to GitHub.
 
