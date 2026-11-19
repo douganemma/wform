@@ -50,7 +50,7 @@ async function wa(req,env){
    await send(env,phone,{type:"text",text:{body:available.length?"Available registrations:\n"+list+"\n\nSend START followed by the form code to begin.":"There are no published forms available right now."}});
    continue;
   }
-  const startMatch=text.match(/^start(?:\\s+([a-z0-9-]+))?$/i);
+  const startMatch=text.match(/^start(?:\s+([a-z0-9-]+))?$/i);
   let c=null,form=null;
   if(startMatch&&startMatch[1])form=await env.DB.prepare("SELECT * FROM forms WHERE slug=? AND status='published'").bind(startMatch[1]).first();
   else{
@@ -104,7 +104,7 @@ async function wa(req,env){
   if(justConsented&&fs.length){
    const first=fs[0],opts=dec(first.options_json)||[];
    await env.DB.prepare("UPDATE conversations SET current_field_id=?,updated_at=datetime('now') WHERE id=?").bind(first.id,c.id).run();
-   let prompt="Thank you. Consent recorded. Let's begin.\\n\\n"+first.label+(first.required?" (required)":" (optional)");
+   let prompt="Thank you. Consent recorded. Let's begin.\n\\n"+first.label+(first.required?" (required)":" (optional)");
    if(first.help_text)prompt+="\\n"+first.help_text;
    if(opts.length)prompt+="\\n"+opts.map((x,i)=>(i+1)+". "+x).join("\\n")+(first.type==="multi_select"?"\\nFor multiple answers, separate option numbers with commas.":"");
    prompt+="\\n\\nType SKIP to skip, BACK to go back, REPEAT to hear this again, or HELP for commands.";
@@ -185,7 +185,7 @@ async function wa(req,env){
 }
 export default {async fetch(req,env){
  const u=new URL(req.url),p=u.pathname;if(p==="/api/health")return j({ok:true,app:"W-Form"});if(p==="/webhooks/whatsapp")return wa(req,env);
- if(p==="/api/admin/login"&&req.method==="GET"){
+ if((p==="/login"||p==="/api/admin/login")&&req.method==="GET"){
   if(!env.ACCESS_TEAM_DOMAIN||!env.ACCESS_AUD)return j({error:"Cloudflare Access settings are missing"},500);
   const target=new URL("https://"+env.ACCESS_TEAM_DOMAIN+"/cdn-cgi/access/login/"+encodeURIComponent(env.ACCESS_AUD));
   target.searchParams.set("redirect_url",new URL("/",req.url).toString());
