@@ -1,9 +1,25 @@
 {
- "$schema":"node_modules/wrangler/config-schema.json",
- "name":"w-form-api",
- "main":"worker/index.js",
- "compatibility_date":"2026-11-19",
- "assets":{"directory":"./dist","binding":"ASSETS","not_found_handling":"single-page-application"},
- "d1_databases":[{"binding":"DB","database_name":"wform-db","database_id":"63f4f918-01a7-4038-8d06-6d821c4d56f3"}],
- "vars":{"APP_ENV":"production","WA_GRAPH_VERSION":"v27.0"}
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "w-form-api",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-11-19",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "wform-db",
+      "database_id": "63f4f918-01a7-4038-8d06-6d821c4d56f3"
+    }
+  ],
+  "vars": {
+    "APP_ENV": "production",
+    "WA_GRAPH_VERSION": "v27.0",
+    "WA_BUSINESS_ACCOUNT_ID": "390231060836292",
+    "WA_PHONE_NUMBER_ID": "342896612248107",
+    "META_APP_ID": "1013953047058135"
+  }
 }
