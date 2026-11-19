@@ -182,6 +182,17 @@ export default {async fetch(req,env){
   for(const s of rows){const ans=(await env.DB.prepare("SELECT ff.label,r.value_json FROM responses r JOIN form_fields ff ON ff.id=r.field_id WHERE r.submission_id=?").bind(s.id).all()).results,values=Object.fromEntries(ans.map(x=>[x.label,dec(x.value_json)]));lines.push([s.id,s.form_title,s.source,s.contact_name,s.contact_phone,s.status,s.consent,s.created_at,...extra.map(k=>Array.isArray(values[k])?values[k].join("; "):values[k])].map(esc).join(","))}
   return new Response(lines.join("\r\n"),{headers:{"content-type":"text/csv; charset=utf-8","content-disposition":'attachment; filename="wform-submissions.csv"',"cache-control":"no-store"}})
  }
+ if(p==="/api/admin/whatsapp/test"&&req.method==="POST"){
+  const last=await env.DB.prepare("SELECT c.id conversation_id,c.wa_id FROM wa_messages m JOIN conversations c ON c.id=m.conversation_id WHERE m.direction='in' ORDER BY m.created_at DESC LIMIT 1").first();
+  if(!last)return j({error:"No incoming WhatsApp sender is recorded yet."},404);
+  const body="Hi, this is a test message from W-Form. Please reply to confirm the WhatsApp connection is working.";
+  try{
+   const result=await send(env,last.wa_id,{type:"text",text:{body}});
+   const messageId=result?.messages?.[0]?.id||null;
+   await env.DB.prepare("INSERT INTO wa_messages(id,conversation_id,direction,message_type,message_id,body) VALUES(?,?,'out','text',?,?)").bind(uid(),last.conversation_id,messageId,body).run();
+   return j({ok:true,recipient:last.wa_id,message_id:messageId,meta_accepted:true});
+  }catch(error){console.error("WFORM_WHATSAPP_TEST_ERROR",String(error?.message||error));return j({ok:false,error:String(error?.message||error),meta_accepted:false},502)}
+ }
  if(p==="/api/admin/whatsapp/status")return j({configured:!!(env.WA_PHONE_NUMBER_ID&&env.WA_ACCESS_TOKEN&&env.WA_VERIFY_TOKEN&&env.META_APP_SECRET),webhook:"/webhooks/whatsapp"});
  return env.ASSETS ? env.ASSETS.fetch(req) : j({error:"Not found"},404)
  }catch(e){return j({error:e.message||"Server error"},500)}
