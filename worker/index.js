@@ -44,9 +44,23 @@ async function wa(req,env){
   const messageId=m.id;
   if(!phone||!text)continue;
   if(messageId&&await env.DB.prepare("SELECT id FROM wa_messages WHERE message_id=?").bind(messageId).first())continue;
-  let form=await env.DB.prepare("SELECT * FROM forms WHERE status='published' ORDER BY created_at LIMIT 1").first();
-  if(!form){await send(env,phone,{type:"text",text:{body:"Registrations are unavailable right now. Please try again later."}});continue;}
-  let c=await env.DB.prepare("SELECT * FROM conversations WHERE wa_id=? AND form_id=?").bind(phone,form.id).first();
+  if(/^forms$/i.test(text)){
+   const available=(await env.DB.prepare("SELECT title,slug FROM forms WHERE status='published' ORDER BY created_at").all()).results||[];
+   const list=available.map(x=>"• "+x.title+" — send START "+x.slug).join("\n");
+   await send(env,phone,{type:"text",text:{body:available.length?"Available registrations:\n"+list+"\n\nSend START followed by the form code to begin.":"There are no published forms available right now."}});
+   continue;
+  }
+  const startMatch=text.match(/^start(?:\\s+([a-z0-9-]+))?$/i);
+  let c=null,form=null;
+  if(startMatch&&startMatch[1])form=await env.DB.prepare("SELECT * FROM forms WHERE slug=? AND status='published'").bind(startMatch[1]).first();
+  else{
+   c=await env.DB.prepare("SELECT * FROM conversations WHERE wa_id=? ORDER BY updated_at DESC LIMIT 1").bind(phone).first();
+   if(c)form=await env.DB.prepare("SELECT * FROM forms WHERE id=? AND status='published'").bind(c.form_id).first();
+   if(!form)form=await env.DB.prepare("SELECT * FROM forms WHERE status='published' ORDER BY created_at LIMIT 1").first();
+  }
+  if(!form){await send(env,phone,{type:"text",text:{body:startMatch&&startMatch[1]?"I couldn't find that published form. Send FORMS to see available registrations.":"Registrations are unavailable right now. Send FORMS to check available registrations."}});continue;}
+  if(c&&c.form_id!==form.id)c=null;
+  if(!c)c=await env.DB.prepare("SELECT * FROM conversations WHERE wa_id=? AND form_id=?").bind(phone,form.id).first();
   const deliver=async(payload,body)=>{
    try{
     const result=await send(env,phone,payload);
@@ -61,18 +75,18 @@ async function wa(req,env){
    await say("You have opted out. You will not receive registration messages. Send START whenever you want to begin again.");
    continue;
   }
-  if(!c||/^start$|^hello$|^hi$|^register$/i.test(text)||c.state==="stopped"||c.state==="complete"){
+  if(!c||startMatch||/^hello$|^hi$|^register$/i.test(text)||c.state==="stopped"||c.state==="complete"){
    const sid=uid(),cid=uid();
    await env.DB.prepare("INSERT INTO submissions(id,form_id,source,contact_phone,status) VALUES(?,?,'whatsapp',?,'incomplete')").bind(sid,form.id,phone).run();
    await env.DB.prepare("INSERT INTO conversations(id,wa_id,form_id,submission_id,state) VALUES(?,?,?,?,'awaiting_consent') ON CONFLICT(wa_id,form_id) DO UPDATE SET id=excluded.id,submission_id=excluded.submission_id,state='awaiting_consent',current_field_id=NULL,updated_at=datetime('now')").bind(cid,phone,form.id,sid).run();
    c=await env.DB.prepare("SELECT * FROM conversations WHERE wa_id=? AND form_id=?").bind(phone,form.id).first();
    if(messageId)await env.DB.prepare("INSERT OR IGNORE INTO wa_messages(id,conversation_id,direction,message_type,message_id,body) VALUES(?,?,'in',?,?,?)").bind(uid(),c.id,m.type||"text",messageId,text).run();
-   await say("Welcome to "+form.title+". I will guide you through the registration one question at a time.\n\nReply YES to agree that your answers and phone number may be used for this registration. Reply NO to cancel. You can type SKIP to skip a question, BACK to return to the previous question, REPEAT to hear a question again, HELP for instructions, or STOP to opt out.");
+   await say("Welcome to "+form.title+". I will guide you through the registration one question at a time.\n\nReply YES to agree that your answers and phone number may be used for this registration. Reply NO to cancel. You can type SKIP to skip a question, BACK to return to the previous question, REPEAT to hear a question again, HELP for instructions, or STOP to opt out. Send FORMS to see other published forms.");
    continue;
   }
   if(messageId)await env.DB.prepare("INSERT OR IGNORE INTO wa_messages(id,conversation_id,direction,message_type,message_id,body) VALUES(?,?,'in',?,?,?)").bind(uid(),c.id,m.type||"text",messageId,text).run();
   if(c.state==="stopped"){await say("You are opted out. Send START to begin a new registration.");continue;}
-  if(c.state==="awaiting_consent"){
+  let justConsented=false;\n  if(c.state==="awaiting_consent"){
    if(/^no$|^cancel$/i.test(text)){
     await env.DB.prepare("UPDATE conversations SET state='stopped' WHERE id=?").bind(c.id).run();
     await say("Your registration has been cancelled. Send START if you change your mind.");
@@ -85,6 +99,18 @@ async function wa(req,env){
   }
   if(c.state!=="active"){await say("This registration is already complete. Send START to submit another registration.");continue;}
   const fs=await getFields(env.DB,form.id);
+  if(justConsented&&fs.length){
+   const first=fs[0],opts=dec(first.options_json)||[];
+   await env.DB.prepare("UPDATE conversations SET current_field_id=?,updated_at=datetime('now') WHERE id=?").bind(first.id,c.id).run();
+   let prompt="Thank you. Consent recorded. Let's begin.\\n\\n"+first.label+(first.required?" (required)":" (optional)");
+   if(first.help_text)prompt+="\\n"+first.help_text;
+   if(opts.length)prompt+="\\n"+opts.map((x,i)=>(i+1)+". "+x).join("\\n")+(first.type==="multi_select"?"\\nFor multiple answers, separate option numbers with commas.":"");
+   prompt+="\\n\\nType SKIP to skip, BACK to go back, REPEAT to hear this again, or HELP for commands.";
+   let payload={type:"text",text:{body:prompt}};
+   if(["single_select","select"].includes(first.type)&&opts.length>0&&opts.length<=3)payload={type:"interactive",interactive:{type:"button",body:{text:prompt},action:{buttons:opts.map((x,i)=>({type:"reply",reply:{id:"choice_"+(i+1),title:String(x).slice(0,20)}}))}}};
+   else if(["single_select","select"].includes(first.type)&&opts.length>3&&opts.length<=10)payload={type:"interactive",interactive:{type:"list",body:{text:prompt},action:{button:"Choose",sections:[{title:"Options",rows:opts.map((x,i)=>({id:"choice_"+(i+1),title:String(x).slice(0,24)}))}]}};
+   await deliver(payload,prompt);continue;
+  }
   if(!fs.length){await env.DB.prepare("UPDATE submissions SET status='complete',updated_at=datetime('now') WHERE id=?").bind(c.submission_id).run();await env.DB.prepare("UPDATE conversations SET state='complete',current_field_id=NULL WHERE id=?").bind(c.id).run();await say(form.confirmation_message||"Thank you. Your registration is complete.");continue;}
   let idx=c.current_field_id?fs.findIndex(x=>x.id===c.current_field_id):0;
   if(idx<0)idx=0;
