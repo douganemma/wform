@@ -193,6 +193,31 @@ export default {async fetch(req,env){
    return j({ok:true,recipient:last.wa_id,message_id:messageId,meta_accepted:true});
   }catch(error){console.error("WFORM_WHATSAPP_TEST_ERROR",String(error?.message||error));return j({ok:false,error:String(error?.message||error),meta_accepted:false},502)}
  }
+ if(p==="/api/admin/whatsapp/inbox"&&req.method==="GET"){
+  const rows=await env.DB.prepare("SELECT c.id,c.wa_id,c.state,c.updated_at,s.contact_name,f.title form_title,(SELECT body FROM wa_messages WHERE conversation_id=c.id ORDER BY created_at DESC LIMIT 1) last_message,(SELECT direction FROM wa_messages WHERE conversation_id=c.id ORDER BY created_at DESC LIMIT 1) last_direction,(SELECT created_at FROM wa_messages WHERE conversation_id=c.id ORDER BY created_at DESC LIMIT 1) last_message_at,(SELECT COUNT(*) FROM wa_messages WHERE conversation_id=c.id AND direction='in') incoming_count FROM conversations c LEFT JOIN submissions s ON s.id=c.submission_id LEFT JOIN forms f ON f.id=c.form_id ORDER BY COALESCE((SELECT created_at FROM wa_messages WHERE conversation_id=c.id ORDER BY created_at DESC LIMIT 1),c.updated_at) DESC").all();
+  return j(rows.results||[]);
+ }
+ const inboxMatch=p.match(/^\/api\/admin\/whatsapp\/inbox\/([^/]+)$/);
+ if(inboxMatch&&req.method==="GET"){
+  const conversationId=decodeURIComponent(inboxMatch[1]);
+  const conversation=await env.DB.prepare("SELECT c.id,c.wa_id,c.state,s.contact_name,f.title form_title FROM conversations c LEFT JOIN submissions s ON s.id=c.submission_id LEFT JOIN forms f ON f.id=c.form_id WHERE c.id=?").bind(conversationId).first();
+  if(!conversation)return j({error:"Conversation not found"},404);
+  const rows=await env.DB.prepare("SELECT id,direction,message_type,body,created_at,message_id FROM wa_messages WHERE conversation_id=? ORDER BY created_at ASC,id ASC").bind(conversationId).all();
+  return j({conversation,messages:rows.results||[]});
+ }
+ if(inboxMatch&&req.method==="POST"){
+  const conversationId=decodeURIComponent(inboxMatch[1]);
+  const conversation=await env.DB.prepare("SELECT * FROM conversations WHERE id=?").bind(conversationId).first();
+  if(!conversation)return j({error:"Conversation not found"},404);
+  const input=await req.json();const body=String(input.body||"").trim();
+  if(!body)return j({error:"Message cannot be empty"},400);
+  try{
+   const result=await send(env,conversation.wa_id,{type:"text",text:{body}});
+   const messageId=result?.messages?.[0]?.id||null;
+   await env.DB.prepare("INSERT INTO wa_messages(id,conversation_id,direction,message_type,message_id,body) VALUES(?,?,'out','text',?,?)").bind(uid(),conversationId,messageId,body).run();
+   return j({ok:true,message_id:messageId});
+  }catch(error){console.error("WFORM_WHATSAPP_REPLY_ERROR",String(error?.message||error));return j({error:String(error?.message||error)},502)}
+ }
  if(p==="/api/admin/whatsapp/status")return j({configured:!!(env.WA_PHONE_NUMBER_ID&&env.WA_ACCESS_TOKEN&&env.WA_VERIFY_TOKEN&&env.META_APP_SECRET),webhook:"/webhooks/whatsapp"});
  return env.ASSETS ? env.ASSETS.fetch(req) : j({error:"Not found"},404)
  }catch(e){return j({error:e.message||"Server error"},500)}
