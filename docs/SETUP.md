@@ -38,7 +38,7 @@
 
 The Graph API version is pinned to v27.0 in the Worker configuration and can be changed with WA_GRAPH_VERSION. Meta's official documentation currently lists v27.0 as the latest version. Meta currently lists v27.0 as the latest Graph API version.\n\n## WhatsApp setup to complete in the later session
 
-The WhatsApp number and business-account properties are deliberately not collected now, as requested. We will later need the Meta app, WhatsApp Business Account ID, phone-number ID, display number, display-name/verification status, permanent access token, app secret, webhook verify token and chosen registration form. Credentials must be entered as encrypted Cloudflare Worker secrets, not pasted into chat or committed to GitHub.
+The WhatsApp Business Account ID, phone-number ID and Meta App ID have now been added to the Worker configuration. We will later need the display number, display-name/verification status, permanent access token, app secret, webhook verify token and chosen registration form. Credentials must be entered as encrypted Cloudflare Worker secrets, not pasted into chat or committed to GitHub.
 
 ## Important current limitations
 
