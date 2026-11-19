@@ -122,10 +122,7 @@ async function wa(req,env){
   if(justConsented&&fs.length){
    const first=fs[0],opts=dec(first.options_json)||[];
    await env.DB.prepare("UPDATE conversations SET current_field_id=?,updated_at=datetime('now') WHERE id=?").bind(first.id,c.id).run();
-   let prompt="Thank you. Consent recorded. Let us begin: "+first.label+(first.required?" (required)":" (optional)");
-   if(first.help_text)prompt+=". "+first.help_text;
-   if(opts.length)prompt+=" Options: "+opts.map((x,i)=>(i+1)+". "+x).join("; ")+(first.type==="multi_select"?". For multiple answers, separate option numbers with commas.":"");
-   prompt+=". Type SKIP to skip, BACK to go back, REPEAT to hear this again, or HELP for commands.";
+   let prompt=first.label;
    const payload=questionPayload(first,prompt);
    await deliver(payload,prompt);continue;
   }
@@ -185,10 +182,7 @@ async function wa(req,env){
   }
   const f=fs[idx],opts=dec(f.options_json)||[];
   await env.DB.prepare("UPDATE conversations SET current_field_id=?,updated_at=datetime('now') WHERE id=?").bind(f.id,c.id).run();
-  let prompt=f.label+(f.required?" (required)":" (optional)");
-  if(f.help_text)prompt+="\n"+f.help_text;
-  if(opts.length)prompt+="\n"+opts.map((x,i)=>(i+1)+". "+x).join("\n")+(f.type==="multi_select"?"\nFor multiple answers, separate option numbers with commas.":"");
-  prompt+="\n\nType SKIP to skip, BACK to go back, REPEAT to hear this again, or HELP for commands.";
+  let prompt=f.label;
    const payload=questionPayload(f,prompt);
   await deliver(payload,prompt);
  }
