@@ -5,5 +5,5 @@
  "compatibility_date":"2026-11-19",
  "assets":{"directory":"./dist","binding":"ASSETS","not_found_handling":"single-page-application"},
  "d1_databases":[{"binding":"DB","database_name":"wform-db","database_id":"REPLACE_WITH_D1_DATABASE_ID"}],
- "vars":{"APP_ENV":"production"}
+ "vars":{"APP_ENV":"production","WA_GRAPH_VERSION":"v27.0"}
 }
